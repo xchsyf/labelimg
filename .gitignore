@@ -1,0 +1,28 @@
+# Python 缓存与编译产物
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 打包与测试产物
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 本地数据集（不需要版本管理时保留此行）
+data/
+
+# 系统与编辑器文件
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
