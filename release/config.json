@@ -1,0 +1,14 @@
+{
+  "box_classes": [
+    "people",
+    "excavator"
+  ],
+  "seg_classes": [
+    "people",
+    "excavator",
+    "null"
+  ],
+  "output_dir": null,
+  "auto_generate_mask": false,
+  "mask_suffix": ""
+}

@@ -1,6 +1,7 @@
 """标注数据模型与全局配置。"""
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -74,7 +75,11 @@ class Config:
     MAX_SEG_CLASSES = 3
     DEFAULT_BOX_CLASSES = ["excavator", "people", "person", "car", "bicycle", "object"]
     DEFAULT_SEG_CLASSES = ["类别R", "类别G", "类别B"]
-    CONFIG_FILE = Path(__file__).with_name("config.json")
+    # 打包成 exe 后，config.json 放在 exe 同目录，方便用户直接编辑
+    if getattr(sys, "frozen", False):
+        CONFIG_FILE = Path(sys.executable).with_name("config.json")
+    else:
+        CONFIG_FILE = Path(__file__).with_name("config.json")
 
     def __init__(self, path=None) -> None:
         self.path = Path(path) if path else self.CONFIG_FILE
