@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Tuple, Optional
 
-VERSION = "v1.0"
+VERSION = "v1.1"
 
 
 @dataclass

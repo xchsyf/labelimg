@@ -1,5 +1,6 @@
 """交互式标注画布：目标框与分割多边形的绘制、选择、移动与缩放。"""
 
+import hashlib
 from math import hypot
 from typing import List, Optional, Tuple
 
@@ -28,10 +29,32 @@ from models import Annotation, Box, Polygon
 
 BOX_COLOR = QColor("#38bdf8")
 SELECT_COLOR = QColor("#fbbf24")
-# 显示颜色：R / G / B 三通道
+# 检测框按类别分配颜色，同一类别在任何图片上都保持一致
+# 色相每隔 30 度一档，并交替使用深浅亮度，避免相邻类别颜色相近
+BOX_PALETTE = [
+    QColor("#D91212"), QColor("#E7A86A"),
+    QColor("#D9D912"), QColor("#A8E76A"),
+    QColor("#12D912"), QColor("#6AE7A8"),
+    QColor("#12D9D9"), QColor("#6AA8E7"),
+    QColor("#1212D9"), QColor("#A86AE7"),
+    QColor("#D912D9"), QColor("#E76AA8"),
+]
+# 分割显示颜色：R / G / B 三通道
 SEG_COLORS = [QColor("#ef4444"), QColor("#22c55e"), QColor("#3b82f6")]
 HANDLE_SIZE = 9
 Point = Tuple[float, float]
+
+
+def color_for_label(label: str) -> QColor:
+    """根据类别名稳定地返回一种显示颜色。"""
+    digest = hashlib.md5((label or "").encode("utf-8")).digest()
+    return QColor(BOX_PALETTE[digest[0] % len(BOX_PALETTE)])
+
+
+def contrast_text_hex(color: QColor) -> str:
+    """根据背景亮度返回黑/白文字色，保证浅色类别的标签也可读。"""
+    luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+    return "#111827" if luminance > 150 else "#ffffff"
 
 
 def _point_in_polygon(point: Point, points: List[Point]) -> bool:
@@ -510,7 +533,19 @@ class AnnotationCanvas(QGraphicsView):
         for i, box in enumerate(self.annotation.boxes):
             b = box.ordered()
             selected = self.selected == ("box", i)
-            color = SELECT_COLOR if selected else BOX_COLOR
+            color = color_for_label(box.label)
+            if selected:
+                offset = self._pixel_radius(4)
+                outline = QGraphicsRectItem(
+                    QRectF(
+                        b.xmin - offset,
+                        b.ymin - offset,
+                        b.xmax - b.xmin + offset * 2,
+                        b.ymax - b.ymin + offset * 2,
+                    )
+                )
+                outline.setPen(self._cosmetic_pen(QColor("#ffffff"), 2, Qt.DashLine))
+                self.scene_.addItem(outline)
             rect = QGraphicsRectItem(
                 QRectF(b.xmin, b.ymin, b.xmax - b.xmin, b.ymax - b.ymin)
             )
@@ -521,7 +556,7 @@ class AnnotationCanvas(QGraphicsView):
             self.scene_.addItem(rect)
 
             label = QGraphicsTextItem(box.label)
-            label.setDefaultTextColor(QColor("#ffffff"))
+            label.setDefaultTextColor(QColor(contrast_text_hex(color)))
             font = QFont()
             font.setPointSize(9)
             font.setBold(True)
@@ -605,7 +640,9 @@ class AnnotationCanvas(QGraphicsView):
             rect = QGraphicsRectItem(
                 QRectF(b.xmin, b.ymin, b.xmax - b.xmin, b.ymax - b.ymin)
             )
-            rect.setPen(self._cosmetic_pen(BOX_COLOR, 2, Qt.DashLine))
+            rect.setPen(
+                self._cosmetic_pen(color_for_label(self._draft_box.label), 2, Qt.DashLine)
+            )
             self.scene_.addItem(rect)
 
         if not self._draft_points:

@@ -1,5 +1,6 @@
 """主窗口：菜单、工具栏、类别配置、图片列表与标注保存。"""
 
+from html import escape as html_escape
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer, QUrl
@@ -30,7 +31,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from canvas import SEG_COLORS, AnnotationCanvas
+from canvas import SEG_COLORS, AnnotationCanvas, color_for_label, contrast_text_hex
 from io_utils import (
     list_images,
     load_polygons_for_image,
@@ -127,6 +128,7 @@ class MainWindow(QMainWindow):
             edit.setText(self.config.seg_classes[i])
             edit.blockSignals(False)
         self.apply_seg_classes(show_message=False, save=False)
+        self.refresh_box_legend()
 
         self.auto_mask_check.blockSignals(True)
         self.auto_mask_check.setChecked(self.config.auto_generate_mask)
@@ -265,9 +267,10 @@ class MainWindow(QMainWindow):
         annotation_page = QWidget()
         ann_layout = QVBoxLayout(annotation_page)
         label_row = QHBoxLayout()
-        label_row.addWidget(QLabel("选中框类别:"))
+        self.selected_label_caption = QLabel("选中类别:")
+        label_row.addWidget(self.selected_label_caption)
         self.selected_label_combo = QComboBox()
-        self.selected_label_combo.setEditable(True)
+        self.selected_label_combo.setEditable(False)
         self.selected_label_combo.addItems(self.config.box_classes)
         self.selected_label_combo.setEnabled(False)
         self.selected_label_combo.currentTextChanged.connect(self.on_selected_label_changed)
@@ -294,6 +297,9 @@ class MainWindow(QMainWindow):
         self.box_class_edit = QLineEdit(", ".join(self.config.box_classes))
         box_layout.addWidget(QLabel("用逗号分隔多个类别："))
         box_layout.addWidget(self.box_class_edit)
+        self.box_color_legend = QLabel()
+        self.box_color_legend.setWordWrap(True)
+        box_layout.addWidget(self.box_color_legend)
         apply_box_button = QPushButton("应用检测类别")
         apply_box_button.clicked.connect(self.apply_box_classes)
         box_layout.addWidget(apply_box_button)
@@ -600,6 +606,15 @@ class MainWindow(QMainWindow):
             f"分割类别: {self.config.seg_classes[class_id]}（写入 {'RGB'[class_id]} 通道）"
         )
 
+    def refresh_box_legend(self) -> None:
+        chips = " ".join(
+            f'<span style="background-color:{color_for_label(name).name()};'
+            f'color:{contrast_text_hex(color_for_label(name))};'
+            f'padding:2px 6px;border-radius:3px;">{html_escape(name)}</span>'
+            for name in self.config.box_classes
+        )
+        self.box_color_legend.setText(f"框颜色：{chips}")
+
     def apply_box_classes(self) -> None:
         raw = self.box_class_edit.text().replace("，", ",")
         names = [name.strip() for name in raw.split(",") if name.strip()]
@@ -619,6 +634,7 @@ class MainWindow(QMainWindow):
         self.selected_label_combo.addItems(names)
         self.selected_label_combo.blockSignals(False)
         self.on_selection_changed(self.canvas.selected)
+        self.refresh_box_legend()
         QMessageBox.information(self, "完成", f"已设置 {len(names)} 个检测类别")
 
     def apply_seg_classes(self, show_message: bool = True, save: bool = True) -> None:
@@ -684,18 +700,37 @@ class MainWindow(QMainWindow):
     def on_selected_label_changed(self, text: str) -> None:
         text = text.strip()
         selection = self.canvas.selected
-        if not text or not selection or selection[0] != "box":
+        if not text or not selection:
             return
-        if selection[1] >= len(self.annotation.boxes):
-            return
-        box = self.annotation.boxes[selection[1]]
-        if box.label == text:
-            return
-        box.label = text
-        self.canvas.redraw()
-        self.on_annotation_changed()
-        self.auto_save()
-        self.on_status_hint(f"已将框 {selection[1] + 1} 类别修改为 {text}")
+        if selection[0] == "box":
+            if selection[1] >= len(self.annotation.boxes):
+                return
+            box = self.annotation.boxes[selection[1]]
+            if box.label == text:
+                return
+            box.label = text
+            self.canvas.redraw()
+            self.on_annotation_changed()
+            self.auto_save()
+            self.on_status_hint(f"已将框 {selection[1] + 1} 类别修改为 {text}")
+        elif selection[0] == "poly":
+            if text not in self.config.seg_classes:
+                return
+            if selection[1] >= len(self.annotation.polygons):
+                return
+            class_id = self.config.seg_classes.index(text)
+            poly = self.annotation.polygons[selection[1]]
+            if poly.class_id == class_id:
+                return
+            poly.class_id = class_id
+            self.canvas.seg_class = class_id
+            self.seg_buttons[class_id].blockSignals(True)
+            self.seg_buttons[class_id].setChecked(True)
+            self.seg_buttons[class_id].blockSignals(False)
+            self.canvas.redraw()
+            self.on_annotation_changed()
+            self.auto_save()
+            self.on_status_hint(f"已将分割 {selection[1] + 1} 类别修改为 {text}")
 
     def on_selection_changed(self, selection) -> None:
         self.annotation_list.blockSignals(True)
@@ -711,13 +746,23 @@ class MainWindow(QMainWindow):
 
         combo = self.selected_label_combo
         combo.blockSignals(True)
+        combo.clear()
         if selection and selection[0] == "box" and selection[1] < len(self.annotation.boxes):
-            combo.setEnabled(True)
+            self.selected_label_caption.setText("选中框类别:")
+            combo.addItems(self.config.box_classes)
             label = self.annotation.boxes[selection[1]].label
             if combo.findText(label) < 0:
                 combo.addItem(label)
             combo.setCurrentText(label)
+            combo.setEnabled(True)
+        elif selection and selection[0] == "poly" and selection[1] < len(self.annotation.polygons):
+            self.selected_label_caption.setText("分割类别:")
+            combo.addItems(self.config.seg_classes)
+            combo.setCurrentIndex(self.annotation.polygons[selection[1]].class_id)
+            combo.setEnabled(True)
         else:
+            self.selected_label_caption.setText("选中类别:")
+            combo.addItems(self.config.box_classes)
             combo.setEnabled(False)
             combo.setCurrentText("")
         combo.blockSignals(False)
@@ -761,14 +806,15 @@ class MainWindow(QMainWindow):
             "使用说明",
             "目标框（检测模式）\n"
             "  · 拖拽鼠标绘制矩形框，框的类别取自工具栏“检测类别”\n"
+            "  · 不同类别的框用不同颜色显示，颜色对应见右侧“类别配置”\n"
             "  · 点击框可选中并整体移动，拖动四角可缩放，Del 删除\n"
-            "  · 选中框后用右侧“选中框类别”下拉框可直接修改类别（也可输入新类别）\n"
+            "  · 选中标注后用右侧“选中类别”下拉框选择新类别\n"
             "  · 保存后生成与图片同名的 .xml（Pascal VOC 格式）\n\n"
             "分割区域（分割模式）\n"
             "  · 依次点击添加多边形顶点，双击起点或按 Enter 完成，Esc 取消\n"
             "  · 绘制中右键点击顶点可删除该点；完成后选中多边形可拖动顶点调整位置\n"
             "  · 最多 3 个类别，分别写入 PNG 的 R / G / B 通道，图上显示配置中的类别名\n"
-            "  · 选中多边形后点击分割类别按钮也可修改其类别\n"
+            "  · 选中多边形后用右侧“分割类别”下拉框或工具栏按钮修改其类别\n"
             "  · 保存后同时写入 XML 和同名 _mask.png 掩码图（与原图等尺寸）\n"
             "  · 切到下一张再返回时，分割区域会从 XML 恢复，可继续调整\n\n"
             "通用\n"
